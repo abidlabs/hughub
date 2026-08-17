@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hughub"
+version = "0.1.0"
+description = "A warm Hugging Face standby for GitHub repositories and Actions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "HugHub contributors" }]
+dependencies = [
+  "huggingface-hub>=1.26.0",
+  "PyYAML>=6.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+hh = "hughub.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hughub"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
