@@ -1,4 +1,4 @@
-from hughub.assets.dispatcher import event_targets, matches
+from hughub.assets.runner import event_targets, matches
 
 
 def test_repo_updates_route_branches_and_pr_refs():
@@ -19,11 +19,11 @@ def test_repo_updates_route_branches_and_pr_refs():
 
 
 def test_push_branch_filters_match_github_shape():
-    workflow = {
-        "on": {"push": {"branches": ["main", "release/*"], "branches-ignore": ["release/old"]}}
+    triggers = {
+        "push": {"branches": ["main", "release/*"], "branches-ignore": ["release/old"]}
     }
 
-    assert matches(workflow, "push", "refs/heads/main")
-    assert matches(workflow, "push", "refs/heads/release/2")
-    assert not matches(workflow, "push", "refs/heads/release/old")
-    assert not matches(workflow, "push", "refs/heads/feature")
+    assert matches(triggers, "push", "refs/heads/main")
+    assert matches(triggers, "push", "refs/heads/release/2")
+    assert not matches(triggers, "push", "refs/heads/release/old")
+    assert not matches(triggers, "push", "refs/heads/feature")

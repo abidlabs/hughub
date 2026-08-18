@@ -33,9 +33,12 @@ class RepoConfig:
     default_branch: str = "main"
     dispatcher_job_id: str | None = None
     webhook_id: str | None = None
+    automation_jobs: list[str] = field(default_factory=list)
+    automation_webhooks: list[str] = field(default_factory=list)
+    automation_revision: str | None = None
     automation_enabled: bool = False
     private: bool = False
-    version: int = 2
+    version: int = 3
 
 
 def git_dir(runner: Runner, cwd: Path | None = None) -> Path:

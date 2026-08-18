@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .automation import provision_automation, set_automation
+from .automation import provision_automation, refresh_automation, set_automation
 from .config import RepoConfig, load_config, now_iso, save_config
 from .errors import HugHubError
 from .git import head_sha, output, remote_url, set_remote, switch_origin, sync_to_hughub
@@ -108,8 +108,8 @@ def enable(
         config.recovery_base = config.last_mirrored_sha
     publish_space(config, runner, private=private, cwd=cwd or Path.cwd())
     save_config(config, runner, cwd)
-    if not no_automation:
-        provision_automation(config)
+    if not no_automation and not private:
+        provision_automation(config, cwd=cwd or Path.cwd())
         save_config(config, runner, cwd)
     return config
 
@@ -142,6 +142,7 @@ def sync(runner: Runner, cwd: Path | None = None) -> RepoConfig:
         config.recovery_base = config.last_mirrored_sha
     if config.space_repo:
         publish_space(config, runner, private=config.private, cwd=cwd or Path.cwd())
+    refresh_automation(config, cwd=cwd or Path.cwd())
     save_config(config, runner, cwd)
     return config
 
@@ -247,6 +248,7 @@ def render_status(config: RepoConfig, *, as_json: bool = False) -> str:
         f"HugHub:          {config.hf_repo}",
         f"Static Space:    {config.space_repo or 'not configured'}",
         f"HF automation:   {'enabled' if config.automation_enabled else 'standby'}",
+        f"Workflow hooks:  {len(config.automation_webhooks)}",
         f"Last mirror:     {config.last_mirrored_sha or 'not yet mirrored'}",
         f"Recovery base:   {config.recovery_base or 'not recorded'}",
     ]

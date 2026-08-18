@@ -84,8 +84,8 @@ def _continuity(args: list[str], runner: Runner, cwd: Path) -> int:
         )
         print(f"Continuity enabled: GitHub {config.github_repo} → HugHub {config.hf_repo}")
         print(f"Static UI: https://huggingface.co/spaces/{config.space_repo}")
-        if config.webhook_id:
-            print(f"Native Job webhook: {config.webhook_id} (standby)")
+        if config.automation_webhooks:
+            print(f"Native Job webhooks: {len(config.automation_webhooks)} (standby)")
         return 0
     if options.action == "sync":
         config = sync(runner, cwd)
@@ -95,10 +95,10 @@ def _continuity(args: list[str], runner: Runner, cwd: Path) -> int:
         config = load_config(runner, cwd)
         assert config is not None
         if options.automation_action == "setup":
-            if config.webhook_id:
-                reprovision_automation(config)
+            if config.automation_webhooks or config.webhook_id:
+                reprovision_automation(config, cwd=cwd)
             else:
-                provision_automation(config)
+                provision_automation(config, cwd=cwd)
         else:
             set_automation(config, enabled=options.automation_action == "enable")
         save_config(config, runner, cwd)

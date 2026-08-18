@@ -35,7 +35,7 @@ WorkflowLoader.add_implicit_resolver(
 @dataclass(frozen=True)
 class RunnerSpec:
     flavor: str = "cpu-upgrade"
-    image: str = "mcr.microsoft.com/playwright:v1.60.0-jammy"
+    image: str = "python:3.12"
 
 
 @dataclass(frozen=True)

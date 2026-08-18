@@ -9,7 +9,7 @@ from typing import Any
 
 from huggingface_hub import HfApi
 
-from .automation import dispatcher_source
+from .automation import runner_source
 from .config import RepoConfig
 from .errors import HugHubError
 from .git import head_sha
@@ -88,7 +88,8 @@ pinned: false
 
 This free Static Space is the read-only continuity UI for the git mirror at
 [`{config.hf_repo}`](https://huggingface.co/{config.hf_repo}). It contains no secrets and
-runs no server. Native Hugging Face webhooks launch ephemeral Jobs when HugHub is promoted.
+    runs no server. Native Hugging Face webhooks rerun ephemeral workflow Jobs when HugHub is
+    promoted.
 """
 
 
@@ -115,7 +116,7 @@ def publish_space(
         directory = Path(temporary)
         (directory / "index.html").write_text(render_index(data))
         (directory / "README.md").write_text(_space_readme(config))
-        (directory / "dispatcher.py").write_text(dispatcher_source())
+        (directory / "runner.py").write_text(runner_source())
         api.upload_folder(
             repo_id=space_repo,
             repo_type="space",

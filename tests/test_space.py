@@ -21,7 +21,7 @@ class FakeSpaceApi:
             "kwargs": kwargs,
             "index": (folder / "index.html").read_text(),
             "readme": (folder / "README.md").read_text(),
-            "dispatcher": (folder / "dispatcher.py").read_text(),
+            "runner": (folder / "runner.py").read_text(),
         }
 
 
@@ -57,7 +57,7 @@ def test_static_space_snapshot_is_generated_without_touching_source(tmp_path):
     assert api.created["space_sdk"] == "static"
     assert "src/widget.py" in api.uploaded["index"]
     assert "sdk: static" in api.uploaded["readme"]
-    assert "WEBHOOK_PAYLOAD" in api.uploaded["dispatcher"]
+    assert "WEBHOOK_PAYLOAD" in api.uploaded["runner"]
     assert (tmp_path / "README.md").read_text() == "# Widget\n\nA useful project.\n"
 
 

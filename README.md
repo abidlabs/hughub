@@ -17,10 +17,11 @@ Commits and pull-request refs live in an already-git-backed Hugging Face reposit
 workflows run directly on Hugging Face Jobs.
 
 There is no standby server fleet to pay for. A public HF repository can sit idle as the
-standby, its paired Static Space is free, and compute starts only for a one-time dispatcher
-bootstrap or Actions-compatible Jobs. Jobs are charged according to their selected hardware
-and runtime. In other words: the continuity layer is free while idle and inexpensive when
-exercised.
+standby, its paired Static Space is free, and compute starts only for brief workflow-Job setup
+or Actions-compatible runs. Jobs are charged according to their selected hardware and
+runtime. In other words: you and your agents do not even need to know GitHub is down—you keep
+pushing to HugHub, the continuity layer is free while idle, and it costs little unless you
+choose substantial Job compute.
 
 > [!IMPORTANT]
 > HugHub is currently an early MVP. Git mirroring, a free read-only Static Space, native
@@ -44,10 +45,12 @@ hh continuity enable OWNER/REPO --hf-repo HF_OWNER/REPO
 This creates or reuses two repositories with the same HF identifier:
 
 - A normal HF repo containing the SHA-identical Git mirror and native HF PR refs.
-- A free Static Space containing a read-only GitHub-like UI and dispatcher source.
+- A free Static Space containing a read-only GitHub-like UI and credential-free runner.
 
-It also creates a one-time CPU-basic source Job and attaches a native HF webhook to it. The
-webhook starts disabled, so GitHub Actions remain the only CI system during normal operation.
+For every compatible workflow job and matrix entry, it creates a dormant HF Job and attaches
+a native repo webhook directly to that Job. The webhooks start disabled, so GitHub Actions
+remain the only CI system during normal operation. No dispatcher service or control plane is
+involved.
 The command adds `github` and `hughub` git remotes, mirrors branches and tags, and records the
 last common commit locally under `.git/hughub/config.json`.
 HugHub detects GitHub's visibility and defaults to a private HF repository if that check
@@ -99,9 +102,10 @@ same `hh` commands are independent of GitHub.
 The promotion is deliberately explicit for Git writes. Automatically making two git hosts
 writable during a network partition would invite split-brain history.
 
-Once promoted, pushes to the HF repo and updates to `refs/pr/*` trigger the dispatcher Job.
-The dispatcher reads the matching `.github/workflows` files at that exact commit and launches
-ephemeral workflow Jobs.
+Once promoted, pushes to the HF repo and updates to `refs/pr/*` rerun the corresponding
+workflow Jobs directly. Each Job checks the webhook event and branch filters, checks out the
+exact pushed commit, and executes its supported steps. No credential-bearing dispatcher or
+second child Job is involved.
 
 ## Coming back to GitHub
 
@@ -160,12 +164,14 @@ The generated UI includes:
 - Git remote and standby status
 - A prominent arrow to HF's Community menu for issues and pull requests
 
-The Space holds no credentials. This also lets private projects use a static snapshot without
-putting an HF token in browser JavaScript.
+The Space holds no credentials. Public automatic workflow Jobs also receive no HF token: they
+clone the public mirror after the webhook has selected an exact SHA.
 
-For a private mirror, set `HH_JOB_TOKEN` during setup to a separate fine-grained HF token with
-read-only access to that repository. Workflow code never receives the write-capable token used
-by the dispatcher to launch Jobs. Public-repository workflow Jobs receive no HF token at all.
+Native webhook automation is intentionally disabled for private mirrors. HF webhook-triggered
+Jobs currently do not inherit source-Job secrets, and webhook secrets can appear as ordinary
+Job environment metadata, so passing a repository token through either path would be unsafe.
+Private mirrors can still run workflows manually with `hh workflow run` and a separate,
+fine-grained read-only token in `HH_JOB_TOKEN`.
 
 ## Actions on Hugging Face Jobs
 
@@ -176,7 +182,7 @@ hardware and images in an optional `.hughub.yml`:
 runners:
   ubuntu-latest:
     flavor: cpu-upgrade
-    image: mcr.microsoft.com/playwright:v1.60.0-jammy
+    image: python:3.12
 
   gpu:
     flavor: a10g-small
@@ -205,7 +211,7 @@ hh run list
 hh run watch JOB_ID
 ```
 
-The current dispatcher and manually launched runner support:
+The current native-webhook and manually launched runners support:
 
 - Parsing `push`, `pull_request`, and `workflow_dispatch` declarations
 - Automatic `push` branch filters and HF pull-request ref events
@@ -259,8 +265,8 @@ hh continuity status --json
 HugHub stores no repository state in a hosted HH control plane. The local file contains the
 GitHub/HF pairing, Static Space, native webhook and source Job IDs, mode, last mirrored
 commit, promotion time, and recovery base. Tokens stay with the existing `gh` and `hf`
-authentication systems. The source Job receives its HF token as an encrypted Job secret;
-the Static Space never receives it.
+authentication systems. Neither the public workflow Jobs nor the Static Space receive an HF
+token.
 
 ## Development
 
@@ -282,5 +288,5 @@ repositories or Jobs.
    incomplete.
 4. **One writer after promotion.** Preserve divergent work; never force an automatic merge.
 5. **No idle infrastructure bill.** Use a Static Space plus native Job webhooks; allocate
-   compute only for dispatch and workflow runs.
+   compute only for brief Job setup and workflow runs.
 6. **Honest compatibility.** Diagnose unsupported workflows before an outage.

@@ -1,124 +1,194 @@
 from __future__ import annotations
 
+import hashlib
 import json
-import os
-import shlex
+import re
 from importlib.resources import files
+from pathlib import Path
+from typing import Any
 
-from huggingface_hub import HfApi, get_token
+from huggingface_hub import HfApi
 
 from .config import RepoConfig
 from .errors import HugHubError
+from .workflows import _load_yaml, _matrixes, inspect_workflow, runner_specs
 
-DISPATCHER_IMAGE = "python:3.12"
+
+def runner_source() -> str:
+    return files("hughub.assets").joinpath("runner.py").read_text()
 
 
-def _dispatcher_command(space_repo: str) -> list[str]:
+def _safe_label(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_=-]", "-", value)[:256]
+
+
+def _runner_command(space_repo: str) -> list[str]:
+    url = f"https://huggingface.co/spaces/{space_repo}/resolve/main/runner.py"
     loader = (
-        "import json,os; from huggingface_hub import hf_hub_download; "
-        "raw=os.environ.get('WEBHOOK_SECRET'); "
-        "token=(json.loads(raw)['dispatcher_token'] if raw else os.environ.get('HF_TOKEN')); "
-        f"p=hf_hub_download(repo_id={space_repo!r},repo_type='space',"
-        "filename='dispatcher.py',token=token); "
-        "exec(compile(open(p).read(),p,'exec'))"
+        "import urllib.request; "
+        f"source=urllib.request.urlopen({url!r}).read(); "
+        "exec(compile(source,'runner.py','exec'))"
     )
-    shell = (
-        "python -m pip install --quiet 'huggingface_hub>=1.26' 'PyYAML>=6' && "
-        f"python -c {shlex.quote(loader)}"
-    )
-    return ["bash", "-lc", shell]
+    return ["python", "-c", loader]
 
 
-def dispatcher_source() -> str:
-    return files("hughub.assets").joinpath("dispatcher.py").read_text()
+def _workflow_specs(config: RepoConfig, cwd: Path) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    runners = runner_specs(cwd)
+    paths = sorted((cwd / ".github" / "workflows").glob("*.y*ml"))
+    for path in paths:
+        errors = [item for item in inspect_workflow(path, cwd) if item.level == "error"]
+        if errors:
+            # Keep GitHub-only workflows in the mirror without breaking continuity setup.
+            continue
+        workflow = _load_yaml(path)
+        workflow_env = workflow.get("env", {}) or {}
+        for job_name, job in workflow["jobs"].items():
+            runner = runners[str(job.get("runs-on", "ubuntu-latest"))]
+            for matrix in _matrixes(job):
+                specs.append(
+                    {
+                        "github_repo": config.github_repo,
+                        "hf_repo": config.hf_repo,
+                        "workflow_file": str(path.relative_to(cwd)),
+                        "workflow_name": str(workflow.get("name", path.name)),
+                        "triggers": workflow.get("on", {}),
+                        "job_name": str(job_name),
+                        "job_env": {**workflow_env, **(job.get("env", {}) or {})},
+                        "steps": job.get("steps", []),
+                        "matrix": matrix,
+                        "image": runner.image,
+                        "flavor": runner.flavor,
+                        "timeout": f"{int(job.get('timeout-minutes', 60))}m",
+                    }
+                )
+    return specs
 
 
-def _credentials(config: RepoConfig) -> tuple[str, str | None, str]:
-    token = get_token()
-    if not token:
-        raise HugHubError("Hugging Face authentication is required. Run `hf auth login`.")
-    job_token = os.environ.get("HH_JOB_TOKEN")
-    if config.private and not job_token:
+def _revision(specs: list[dict[str, Any]]) -> str:
+    encoded = json.dumps(specs, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _delete_webhooks(config: RepoConfig, api: HfApi) -> None:
+    ids = [*config.automation_webhooks]
+    if config.webhook_id and config.webhook_id not in ids:
+        ids.append(config.webhook_id)
+    for webhook_id in ids:
+        try:
+            api.delete_webhook(webhook_id)
+        except Exception as exc:
+            # A stale local ID is expected after manual cleanup in the HF settings/API.
+            if "404" not in str(exc) and "not found" not in str(exc).lower():
+                raise HugHubError(
+                    f"Could not remove old HF webhook {webhook_id}: {exc}"
+                ) from exc
+    config.automation_jobs = []
+    config.automation_webhooks = []
+    config.dispatcher_job_id = None
+    config.webhook_id = None
+    config.automation_enabled = False
+
+
+def provision_automation(
+    config: RepoConfig, *, cwd: Path | None = None, api: HfApi | None = None
+) -> None:
+    if config.private:
         raise HugHubError(
-            "Private mirrors require HH_JOB_TOKEN to contain a fine-grained, read-only HF "
-            "token. Workflow code never receives your write-capable dispatcher token."
+            "Native push automation is only safe for public mirrors. Private mirrors can use "
+            "`hh workflow run` with a separate read-only HH_JOB_TOKEN."
         )
-    encoded = json.dumps({"dispatcher_token": token, "job_token": job_token or ""})
-    return token, job_token, encoded
-
-
-def provision_automation(config: RepoConfig, *, api: HfApi | None = None) -> None:
-    if config.webhook_id:
+    if config.automation_webhooks or config.webhook_id:
         raise HugHubError(
-            "HF automation is already provisioned. Use `hh continuity automation enable|disable`."
+            "HF automation is already provisioned. Use `hh continuity automation setup` to "
+            "replace it."
         )
     if not config.space_repo:
         raise HugHubError("Create the HugHub Static Space before provisioning automation.")
-    token, job_token, webhook_secret = _credentials(config)
-    api = api or HfApi(token=token)
-    secrets = {"HF_TOKEN": token}
-    if job_token:
-        secrets["HH_JOB_TOKEN"] = job_token
+    cwd = cwd or Path.cwd()
+    workflow_specs = _workflow_specs(config, cwd)
+    api = api or HfApi()
+    jobs: list[str] = []
+    webhooks: list[str] = []
     try:
-        source_job = api.run_job(
-            image=DISPATCHER_IMAGE,
-            command=_dispatcher_command(config.space_repo),
-            flavor="cpu-basic",
-            name=f"hh-dispatcher-{config.hf_repo.replace('/', '--')}",
-            labels={
-                "hughub-role": "dispatcher",
-                "hughub-repo": config.hf_repo.replace("/", "--"),
-            },
-            env={
-                "HH_GITHUB_REPO": config.github_repo,
-                "HH_HF_REPO": config.hf_repo,
-                "HH_PRIVATE": "1" if config.private else "0",
-            },
-            secrets=secrets,
-            timeout="10m",
-        )
-        webhook = api.create_webhook(
-            job_id=source_job.id,
-            watched=[{"type": "model", "name": config.hf_repo}],
-            # The live webhook API uses the singular form even though some SDK releases
-            # advertise `discussions` in their type alias.
-            domains=["repo", "discussion"],  # type: ignore[list-item]
-            secret=webhook_secret,
-        )
-        api.disable_webhook(webhook.id)
+        for index, spec in enumerate(workflow_specs, start=1):
+            matrix_suffix = "-".join(str(value) for value in spec["matrix"].values())
+            display = f"{spec['job_name']}-{matrix_suffix}".strip("-")
+            source_job = api.run_job(
+                image=spec["image"],
+                command=_runner_command(config.space_repo),
+                flavor=spec["flavor"],
+                name=f"hh-{display}"[:63],
+                labels={
+                    "hughub-role": "workflow",
+                    "hughub-repo": _safe_label(config.hf_repo.replace("/", "--")),
+                    "hughub-workflow": _safe_label(spec["workflow_file"]),
+                    "hughub-slot": str(index),
+                },
+                env={"HH_JOB_SPEC": json.dumps(spec, separators=(",", ":"))},
+                timeout=spec["timeout"],
+            )
+            jobs.append(source_job.id)
+            webhook = api.create_webhook(
+                job_id=source_job.id,
+                watched=[{"type": "model", "name": config.hf_repo}],
+                domains=["repo"],
+            )
+            webhooks.append(webhook.id)
+            api.disable_webhook(webhook.id)
     except Exception as exc:
+        for webhook_id in webhooks:
+            try:
+                api.delete_webhook(webhook_id)
+            except Exception:
+                pass
         raise HugHubError(f"Could not provision HF Job automation: {exc}") from exc
-    config.dispatcher_job_id = source_job.id
-    config.webhook_id = webhook.id
+    config.automation_jobs = jobs
+    config.automation_webhooks = webhooks
+    config.automation_revision = _revision(workflow_specs)
     config.automation_enabled = False
+    config.version = 3
 
 
-def reprovision_automation(config: RepoConfig, *, api: HfApi | None = None) -> None:
-    token = get_token()
-    api = api or HfApi(token=token)
-    if config.webhook_id:
-        try:
-            api.delete_webhook(config.webhook_id)
-        except Exception as exc:
-            raise HugHubError(
-                f"Could not remove old HF webhook {config.webhook_id}: {exc}"
-            ) from exc
-    config.webhook_id = None
-    config.dispatcher_job_id = None
-    config.automation_enabled = False
-    provision_automation(config, api=api)
+def reprovision_automation(
+    config: RepoConfig, *, cwd: Path | None = None, api: HfApi | None = None
+) -> None:
+    api = api or HfApi()
+    _delete_webhooks(config, api)
+    provision_automation(config, cwd=cwd, api=api)
+
+
+def refresh_automation(
+    config: RepoConfig, *, cwd: Path | None = None, api: HfApi | None = None
+) -> bool:
+    """Replace standby jobs when committed workflow configuration changed."""
+    if config.automation_revision is None:
+        return False
+    cwd = cwd or Path.cwd()
+    specs = _workflow_specs(config, cwd)
+    if _revision(specs) == config.automation_revision:
+        return False
+    was_enabled = config.automation_enabled
+    reprovision_automation(config, cwd=cwd, api=api)
+    if was_enabled:
+        set_automation(config, enabled=True, api=api)
+    return True
 
 
 def set_automation(config: RepoConfig, *, enabled: bool, api: HfApi | None = None) -> None:
-    if not config.webhook_id:
+    webhook_ids = list(config.automation_webhooks)
+    if config.webhook_id and config.webhook_id not in webhook_ids:
+        webhook_ids.append(config.webhook_id)
+    if not webhook_ids:
         return
     api = api or HfApi()
     try:
-        if enabled:
-            api.enable_webhook(config.webhook_id)
-        else:
-            api.disable_webhook(config.webhook_id)
+        for webhook_id in webhook_ids:
+            if enabled:
+                api.enable_webhook(webhook_id)
+            else:
+                api.disable_webhook(webhook_id)
     except Exception as exc:
         action = "enable" if enabled else "disable"
-        raise HugHubError(f"Could not {action} HugHub webhook {config.webhook_id}: {exc}") from exc
+        raise HugHubError(f"Could not {action} HugHub webhooks: {exc}") from exc
     config.automation_enabled = enabled
