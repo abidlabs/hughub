@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from hughub import automation
@@ -12,6 +13,7 @@ class FakeApi:
         self.webhook_kwargs = None
         self.disabled = []
         self.enabled = []
+        self.deleted = []
 
     def run_job(self, **kwargs):
         self.run_kwargs = kwargs
@@ -26,6 +28,9 @@ class FakeApi:
 
     def enable_webhook(self, webhook_id):
         self.enabled.append(webhook_id)
+
+    def delete_webhook(self, webhook_id):
+        self.deleted.append(webhook_id)
 
 
 def test_provision_creates_disabled_native_job_webhook(monkeypatch):
@@ -43,6 +48,10 @@ def test_provision_creates_disabled_native_job_webhook(monkeypatch):
     assert api.webhook_kwargs["job_id"] == "job-123"
     assert api.webhook_kwargs["watched"] == [{"type": "model", "name": "hf-acme/widget"}]
     assert api.webhook_kwargs["domains"] == ["repo", "discussion"]
+    assert json.loads(api.webhook_kwargs["secret"]) == {
+        "dispatcher_token": "hf_secret",
+        "job_token": "",
+    }
     assert api.run_kwargs["secrets"] == {"HF_TOKEN": "hf_secret"}
     assert api.disabled == ["webhook-456"]
 

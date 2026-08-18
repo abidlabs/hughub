@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .automation import provision_automation, set_automation
+from .automation import provision_automation, reprovision_automation, set_automation
 from .config import load_config, save_config
 from .continuity import enable, promote, recover, render_status, sync, warn_auto_failover
 from .errors import HugHubError
@@ -95,7 +95,10 @@ def _continuity(args: list[str], runner: Runner, cwd: Path) -> int:
         config = load_config(runner, cwd)
         assert config is not None
         if options.automation_action == "setup":
-            provision_automation(config)
+            if config.webhook_id:
+                reprovision_automation(config)
+            else:
+                provision_automation(config)
         else:
             set_automation(config, enabled=options.automation_action == "enable")
         save_config(config, runner, cwd)

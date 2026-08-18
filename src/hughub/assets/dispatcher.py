@@ -172,14 +172,18 @@ def script_for_job(
 
 
 def dispatch(payload: dict[str, Any]) -> int:
-    token = os.environ["HF_TOKEN"]
+    raw_credentials = os.environ.get("WEBHOOK_SECRET")
+    credentials = json.loads(raw_credentials) if raw_credentials else {}
+    token = credentials.get("dispatcher_token") or os.environ.get("HF_TOKEN")
+    if not token:
+        raise ValueError("The webhook did not provide dispatcher credentials")
     repo_id = os.environ.get("WEBHOOK_REPO_ID") or payload.get("repo", {}).get("name")
     if not repo_id:
         raise ValueError("Webhook payload has no repository ID")
     github_repo = os.environ.get("HH_GITHUB_REPO", repo_id)
     api = HfApi(token=token)
     private = os.environ.get("HH_PRIVATE") == "1"
-    job_token = os.environ.get("HH_JOB_TOKEN")
+    job_token = credentials.get("job_token") or os.environ.get("HH_JOB_TOKEN")
     if private and not job_token:
         raise ValueError("Private HugHub jobs require a separate read-only HH_JOB_TOKEN")
     launched = 0
