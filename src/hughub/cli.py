@@ -9,7 +9,7 @@ from pathlib import Path
 from . import __version__
 from .automation import provision_automation, reprovision_automation, set_automation
 from .config import load_config, save_config
-from .continuity import enable, promote, recover, render_status, sync, warn_auto_failover
+from .continuity import enable, mirror, promote, recover, render_status, sync, warn_auto_failover
 from .errors import HugHubError
 from .hub import HubBackend
 from .process import Result, Runner
@@ -40,6 +40,7 @@ Normally, every command is passed through to gh unchanged:
   hh run watch 123
 
 Continuity commands:
+  hh mirror [--hf-repo OWNER/REPO]
   hh continuity enable [OWNER/REPO] [--hf-repo OWNER/REPO] [--space-repo OWNER/REPO]
   hh continuity sync
   hh continuity status [--json]
@@ -110,6 +111,30 @@ def _continuity(args: list[str], runner: Runner, cwd: Path) -> int:
     return 0
 
 
+def _mirror(args: list[str], runner: Runner, cwd: Path) -> int:
+    parser = argparse.ArgumentParser(
+        prog="hh mirror",
+        description="Mirror this repository to Hugging Face and make git push update both.",
+    )
+    parser.add_argument("--hf-repo", help="HF_OWNER/REPO (defaults to your HF user/repo name)")
+    parser.add_argument("--space-repo", help="paired Static Space ID (defaults to HF repo ID)")
+    visibility = parser.add_mutually_exclusive_group()
+    visibility.add_argument("--private", action="store_true", default=None)
+    visibility.add_argument("--public", action="store_false", dest="private")
+    options = parser.parse_args(args)
+    config = mirror(
+        runner,
+        hf_repo=options.hf_repo,
+        space_repo=options.space_repo,
+        private=options.private,
+        cwd=cwd,
+    )
+    print(f"Mirrored {config.github_repo} → https://huggingface.co/{config.hf_repo}")
+    print(f"Static UI: https://huggingface.co/spaces/{config.space_repo}")
+    print("Done. Ordinary `git push` now updates both GitHub and Hugging Face.")
+    return 0
+
+
 def _failover(args: list[str], runner: Runner, cwd: Path) -> int:
     parser = argparse.ArgumentParser(prog="hh failover")
     group = parser.add_mutually_exclusive_group()
@@ -164,6 +189,8 @@ def run(
     if args[0] in {"--version", "version"}:
         print(f"hh version {__version__}")
         return 0
+    if args[0] == "mirror":
+        return _mirror(args[1:], runner, cwd)
     if args[0] == "continuity":
         return _continuity(args[1:], runner, cwd)
     if args[0] == "failover":

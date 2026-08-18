@@ -6,10 +6,21 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from huggingface_hub import HfApi
+
 from .automation import provision_automation, refresh_automation, set_automation
 from .config import RepoConfig, load_config, now_iso, save_config
 from .errors import HugHubError
-from .git import head_sha, output, remote_url, set_remote, switch_origin, sync_to_hughub
+from .git import (
+    configure_dual_push,
+    current_branch,
+    head_sha,
+    output,
+    remote_url,
+    set_remote,
+    switch_origin,
+    sync_to_hughub,
+)
 from .process import Runner
 from .space import publish_space
 
@@ -51,6 +62,79 @@ def _is_private(runner: Runner, repo: str, cwd: Path | None) -> bool:
         # A failed visibility check must never turn a private codebase public.
         return True
     return result.stdout.strip().lower() != "false"
+
+
+def mirror(
+    runner: Runner,
+    *,
+    hf_repo: str | None = None,
+    space_repo: str | None = None,
+    private: bool | None = None,
+    cwd: Path | None = None,
+    api: HfApi | None = None,
+) -> RepoConfig:
+    """Create a warm mirror of the current checkout and make `git push` update both."""
+
+    cwd = cwd or Path.cwd()
+    # This also provides the friendliest error when the command is run outside a repository.
+    sha = head_sha(runner, cwd)
+    branch = current_branch(runner, cwd)
+    existing = load_config(runner, cwd, required=False)
+    github_repo = existing.github_repo if existing else _github_repo(runner, None, cwd)
+    if private is None:
+        private = existing.private if existing else _is_private(runner, github_repo, cwd)
+    github_url = remote_url(runner, "origin", cwd)
+    if not github_url:
+        raise HugHubError("The repository needs an `origin` remote before it can be mirrored.")
+
+    api = api or HfApi()
+    if existing and not hf_repo:
+        hf_repo = existing.hf_repo
+    if not hf_repo:
+        try:
+            identity = api.whoami()
+            hf_owner = str(identity["name"])
+        except Exception as exc:
+            raise HugHubError(
+                "Hugging Face authentication is required. Run `hf auth login` first."
+            ) from exc
+        hf_repo = f"{hf_owner}/{github_repo.rsplit('/', 1)[-1]}"
+    space_repo = space_repo or (existing.space_repo if existing else None) or hf_repo
+    hf_url = f"https://huggingface.co/{hf_repo}"
+
+    try:
+        api.create_repo(repo_id=hf_repo, repo_type="model", private=private, exist_ok=True)
+    except Exception as exc:
+        raise HugHubError(f"Could not create Hugging Face mirror `{hf_repo}`: {exc}") from exc
+    set_remote(runner, "github", github_url, cwd)
+    set_remote(runner, "hughub", hf_url, cwd)
+    runner.run(
+        ["git", "push", "hughub", f"HEAD:refs/heads/{branch}"], cwd=cwd, check=True
+    )
+
+    config = existing or RepoConfig(github_repo=github_repo, hf_repo=hf_repo)
+    config.github_repo = github_repo
+    config.hf_repo = hf_repo
+    config.space_repo = space_repo
+    config.github_remote = "github"
+    config.hughub_remote = "hughub"
+    config.last_mirrored_sha = sha
+    config.recovery_base = sha
+    config.default_branch = branch
+    config.private = private
+    config.version = 3
+    publish_space(config, runner, private=private, cwd=cwd, api=api)
+    configure_dual_push(
+        runner,
+        remote="origin",
+        # Git stops at the first failed push URL. Put the continuity target first so a
+        # GitHub outage cannot prevent the commit from reaching HugHub.
+        first_url=hf_url,
+        second_url=github_url,
+        cwd=cwd,
+    )
+    save_config(config, runner, cwd)
+    return config
 
 
 def enable(

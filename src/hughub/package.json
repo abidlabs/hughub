@@ -1,0 +1,6 @@
+{
+  "name": "hughub",
+  "version": "0.2.0",
+  "description": "A warm Hugging Face standby for GitHub repositories and Actions",
+  "python": true
+}

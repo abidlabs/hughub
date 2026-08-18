@@ -2,6 +2,47 @@
 
 **What if GitHub went down and you didn't even notice?**
 
+## Two-command setup
+
+Install the `hh` CLI once:
+
+```console
+uv tool install hughub
+```
+
+Then, from any existing GitHub checkout:
+
+```console
+hf auth login
+hh mirror
+```
+
+That is the whole setup. HugHub copies the current branch to a git-backed Hugging Face
+repository, creates a free paired Static Space, and configures `origin` with two push URLs.
+From then on, use Git normally:
+
+```console
+git add .
+git commit -m "Keep working"
+git push
+```
+
+The same push goes to Hugging Face first and GitHub second. GitHub remains the fetch source,
+so pulls and all existing tooling behave normally. Run `hh mirror` again at any time; setup
+is idempotent.
+
+By default the HF repository is `YOUR_HF_USERNAME/GITHUB_REPO_NAME`. Override it when needed:
+
+```console
+hh mirror --hf-repo MY_ORG/MY_REPO
+```
+
+Git itself stops after a failed push destination. HugHub is ordered first, so a GitHub outage
+cannot prevent the safety copy; Git reports GitHub's error only after HF accepts the commit.
+If Hugging Face itself is down, push GitHub directly with `git push github`. A future HugHub
+remote helper can make either partial failure completely invisible while preserving normal
+`git push` syntax.
+
 HugHub is a warm Hugging Face standby for GitHub. You and your agents use the familiar
 `gh` command shape through `hh`:
 
@@ -29,14 +70,15 @@ choose substantial Job compute.
 > recovery PRs work. Periodic GitHub-to-HF synchronization still runs through `hh continuity
 > sync`, and broad GitHub Actions compatibility is still planned.
 
-## The experience
+## Advanced continuity setup
 
-Set up a repository while GitHub is healthy:
+`hh mirror` intentionally starts with the smallest useful setup: the current branch, dual
+push, and the Static Space. The older continuity command additionally mirrors all branches
+and tags and prepares compatible Actions jobs:
 
 ```console
 hf auth login
 gh auth login
-uv tool install .
 
 cd your-repository
 hh continuity enable OWNER/REPO --hf-repo HF_OWNER/REPO

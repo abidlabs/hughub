@@ -33,6 +33,31 @@ def set_remote(runner: Runner, name: str, url: str, cwd: Path | None = None) -> 
         runner.run(["git", "remote", "add", name, url], cwd=cwd, check=True)
 
 
+def configure_dual_push(
+    runner: Runner,
+    *,
+    remote: str,
+    first_url: str,
+    second_url: str,
+    cwd: Path | None = None,
+) -> None:
+    """Keep one fetch URL while making ordinary pushes target both hosts."""
+
+    # `git remote set-url --add --push` appends, so clear our previous configuration first
+    # to keep `hh mirror` idempotent.
+    runner.run(["git", "config", "--unset-all", f"remote.{remote}.pushurl"], cwd=cwd)
+    runner.run(
+        ["git", "remote", "set-url", "--add", "--push", remote, first_url],
+        cwd=cwd,
+        check=True,
+    )
+    runner.run(
+        ["git", "remote", "set-url", "--add", "--push", remote, second_url],
+        cwd=cwd,
+        check=True,
+    )
+
+
 def sync_to_hughub(
     runner: Runner,
     *,

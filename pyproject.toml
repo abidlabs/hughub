@@ -4,12 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hughub"
-version = "0.2.0"
 description = "A warm Hugging Face standby for GitHub repositories and Actions"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "HugHub contributors" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+dynamic = ["version"]
 dependencies = [
   "huggingface-hub>=1.26.0",
   "PyYAML>=6.0",
@@ -24,8 +36,17 @@ dev = [
 [project.scripts]
 hh = "hughub.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/abidlabs/hughub"
+Repository = "https://github.com/abidlabs/hughub"
+Issues = "https://github.com/abidlabs/hughub/issues"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/hughub"]
+
+[tool.hatch.version]
+path = "src/hughub/package.json"
+pattern = ".*\"version\":\\s*\"(?P<version>[^\"]+)\""
 
 [tool.pytest.ini_options]
 addopts = "-q"
