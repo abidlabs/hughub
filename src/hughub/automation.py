@@ -57,8 +57,8 @@ def provision_automation(config: RepoConfig, *, api: HfApi | None = None) -> Non
             flavor="cpu-basic",
             name=f"hh-dispatcher-{config.hf_repo.replace('/', '--')}",
             labels={
-                "hughub.role": "dispatcher",
-                "hughub.repo": config.hf_repo.replace("/", "--"),
+                "hughub-role": "dispatcher",
+                "hughub-repo": config.hf_repo.replace("/", "--"),
             },
             env={
                 "HH_GITHUB_REPO": config.github_repo,

@@ -77,5 +77,5 @@ jobs:
     assert result == 0
     jobs_calls = [call for call in runner.calls if call[:3] == ("hf", "jobs", "run")]
     assert len(jobs_calls) == 1
-    assert "hughub.repo=hf-acme--widget" in jobs_calls[0]
+    assert "hughub-repo=hf-acme--widget" in jobs_calls[0]
     assert "Launched 1" in capsys.readouterr().out

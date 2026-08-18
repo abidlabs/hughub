@@ -226,7 +226,7 @@ class HubBackend:
     def run(self, args: list[str]) -> int:
         action = args[0] if args else "list"
         rest = args[1:]
-        label = ["--label", f"hughub.repo={self.config.hf_repo.replace('/', '--')}"]
+        label = ["--label", f"hughub-repo={self.config.hf_repo.replace('/', '--')}"]
         if action in {"list", "ls"}:
             result = self.runner.run(["hf", "jobs", "list", "--all", *label, *rest], cwd=self.cwd)
         elif action in {"view", "watch", "cancel"}:

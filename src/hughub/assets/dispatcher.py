@@ -20,6 +20,10 @@ import yaml
 from huggingface_hub import HfApi, hf_hub_download
 
 
+def safe_label(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_=-]", "-", value)[:256]
+
+
 class WorkflowLoader(yaml.SafeLoader):
     pass
 
@@ -215,10 +219,10 @@ def dispatch(payload: dict[str, Any]) -> int:
                         flavor=spec["flavor"],
                         name=f"hh-{job_name}-{suffix}".strip("-")[:63],
                         labels={
-                            "hughub.repo": repo_id.replace("/", "--"),
-                            "hughub.workflow": Path(workflow_file).name,
-                            "hughub.event": event_name,
-                            "hughub.sha": sha,
+                            "hughub-repo": safe_label(repo_id.replace("/", "--")),
+                            "hughub-workflow": safe_label(Path(workflow_file).name),
+                            "hughub-event": safe_label(event_name),
+                            "hughub-sha": safe_label(sha),
                         },
                         env={
                             "HH_REPO_URL": f"https://huggingface.co/{repo_id}",
