@@ -22,6 +22,7 @@ def now_iso() -> str:
 class RepoConfig:
     github_repo: str
     hf_repo: str
+    space_repo: str | None = None
     mode: Mode = "github"
     github_remote: str = "github"
     hughub_remote: str = "hughub"
@@ -30,7 +31,11 @@ class RepoConfig:
     recovery_base: str | None = None
     last_mirrored_sha: str | None = None
     default_branch: str = "main"
-    version: int = 1
+    dispatcher_job_id: str | None = None
+    webhook_id: str | None = None
+    automation_enabled: bool = False
+    private: bool = False
+    version: int = 2
 
 
 def git_dir(runner: Runner, cwd: Path | None = None) -> Path:

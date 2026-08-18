@@ -6,10 +6,12 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .automation import provision_automation, set_automation
 from .config import RepoConfig, load_config, now_iso, save_config
 from .errors import HugHubError
 from .git import head_sha, output, remote_url, set_remote, switch_origin, sync_to_hughub
 from .process import Runner
+from .space import publish_space
 
 
 def _github_repo(runner: Runner, supplied: str | None, cwd: Path | None) -> str:
@@ -56,8 +58,10 @@ def enable(
     *,
     github_repo: str | None,
     hf_repo: str | None,
+    space_repo: str | None,
     private: bool | None,
     no_push: bool,
+    no_automation: bool,
     cwd: Path | None = None,
 ) -> RepoConfig:
     github_repo = _github_repo(runner, github_repo, cwd)
@@ -79,8 +83,10 @@ def enable(
     config = RepoConfig(
         github_repo=github_repo,
         hf_repo=hf_repo,
+        space_repo=space_repo or hf_repo,
         default_branch=_default_branch(runner, github_repo, cwd),
         recovery_base=head_sha(runner, cwd),
+        private=private,
     )
     if not no_push:
         sync_to_hughub(
@@ -100,7 +106,11 @@ def enable(
             cwd,
         )
         config.recovery_base = config.last_mirrored_sha
+    publish_space(config, runner, private=private, cwd=cwd or Path.cwd())
     save_config(config, runner, cwd)
+    if not no_automation:
+        provision_automation(config)
+        save_config(config, runner, cwd)
     return config
 
 
@@ -130,6 +140,8 @@ def sync(runner: Runner, cwd: Path | None = None) -> RepoConfig:
     )
     if config.mode == "github":
         config.recovery_base = config.last_mirrored_sha
+    if config.space_repo:
+        publish_space(config, runner, private=config.private, cwd=cwd or Path.cwd())
     save_config(config, runner, cwd)
     return config
 
@@ -152,6 +164,9 @@ def promote(runner: Runner, mode: str, cwd: Path | None = None) -> RepoConfig:
         if not hf_url:
             raise HugHubError("The HugHub git remote is missing.")
         switch_origin(runner, hf_url, cwd)
+    set_automation(config, enabled=True)
+    if config.space_repo:
+        publish_space(config, runner, private=config.private, cwd=cwd or Path.cwd())
     save_config(config, runner, cwd)
     return config
 
@@ -167,6 +182,8 @@ def recover(
     assert config is not None
     if config.mode == "github":
         raise HugHubError("This repository is already using GitHub.")
+
+    set_automation(config, enabled=False)
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     recovery_branch = branch_name or f"hughub-recovery-{timestamp}"
@@ -215,6 +232,8 @@ def recover(
     switch_origin(runner, github_url, cwd)
     config.mode = "github"
     config.promoted_at = None
+    if config.space_repo:
+        publish_space(config, runner, private=config.private, cwd=cwd or Path.cwd())
     save_config(config, runner, cwd)
     return recovery_branch
 
@@ -226,6 +245,8 @@ def render_status(config: RepoConfig, *, as_json: bool = False) -> str:
         f"Mode:            {config.mode}",
         f"GitHub:          {config.github_repo}",
         f"HugHub:          {config.hf_repo}",
+        f"Static Space:    {config.space_repo or 'not configured'}",
+        f"HF automation:   {'enabled' if config.automation_enabled else 'standby'}",
         f"Last mirror:     {config.last_mirrored_sha or 'not yet mirrored'}",
         f"Recovery base:   {config.recovery_base or 'not recorded'}",
     ]

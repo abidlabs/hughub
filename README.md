@@ -17,14 +17,16 @@ Commits and pull-request refs live in an already-git-backed Hugging Face reposit
 workflows run directly on Hugging Face Jobs.
 
 There is no standby server fleet to pay for. A public HF repository can sit idle as the
-standby, and compute is only used when you choose to run Actions-compatible jobs. Those jobs
-are charged according to the selected HF Jobs hardware and runtime. In other words: the
-continuity layer is designed to be free while idle and inexpensive when exercised.
+standby, its paired Static Space is free, and compute starts only for a one-time dispatcher
+bootstrap or Actions-compatible Jobs. Jobs are charged according to their selected hardware
+and runtime. In other words: the continuity layer is free while idle and inexpensive when
+exercised.
 
 > [!IMPORTANT]
-> HugHub is currently an early, local-first MVP. Git mirroring, promotion, lightweight HF
-> pull requests/issues, direct Jobs execution, and aggregate recovery PRs work. Automated
-> server-side mirroring and broad GitHub Actions compatibility are still planned.
+> HugHub is currently an early MVP. Git mirroring, a free read-only Static Space, native
+> webhook-triggered Jobs, promotion, lightweight HF pull requests/issues, and aggregate
+> recovery PRs work. Periodic GitHub-to-HF synchronization still runs through `hh continuity
+> sync`, and broad GitHub Actions compatibility is still planned.
 
 ## The experience
 
@@ -39,8 +41,15 @@ cd your-repository
 hh continuity enable OWNER/REPO --hf-repo HF_OWNER/REPO
 ```
 
-This creates or reuses the HF repository, adds `github` and `hughub` git remotes, mirrors
-branches and tags, and records the last common commit locally under `.git/hughub/config.json`.
+This creates or reuses two repositories with the same HF identifier:
+
+- A normal HF repo containing the SHA-identical Git mirror and native HF PR refs.
+- A free Static Space containing a read-only GitHub-like UI and dispatcher source.
+
+It also creates a one-time CPU-basic source Job and attaches a native HF webhook to it. The
+webhook starts disabled, so GitHub Actions remain the only CI system during normal operation.
+The command adds `github` and `hughub` git remotes, mirrors branches and tags, and records the
+last common commit locally under `.git/hughub/config.json`.
 HugHub detects GitHub's visibility and defaults to a private HF repository if that check
 fails; `--public` and `--private` can override it explicitly.
 
@@ -73,7 +82,7 @@ hh failover --overlay
 
 Git commits can continue going to GitHub. `hh pr`, `hh issue`, `hh run`, and
 `hh workflow run` use HugHub. Transient failures from supported agent commands enter this
-mode automatically.
+mode automatically. Promotion enables the native HF Job webhook.
 
 ### Full HugHub mode
 
@@ -90,6 +99,10 @@ same `hh` commands are independent of GitHub.
 The promotion is deliberately explicit for Git writes. Automatically making two git hosts
 writable during a network partition would invite split-brain history.
 
+Once promoted, pushes to the HF repo and updates to `refs/pr/*` trigger the dispatcher Job.
+The dispatcher reads the matching `.github/workflows` files at that exact commit and launches
+ephemeral workflow Jobs.
+
 ## Coming back to GitHub
 
 When GitHub is healthy again:
@@ -101,6 +114,8 @@ hh recover --to github
 HugHub pushes the current HEAD to a timestamped `hughub-recovery-*` branch, opens one GitHub
 pull request describing the recovery epoch and base commit, restores `origin` to GitHub, and
 returns to standby mode.
+
+Recovery disables the native HF webhook before moving work back, preventing duplicate runs.
 
 To push the recovery branch without opening a PR:
 
@@ -121,15 +136,36 @@ hh continuity sync
 ```
 
 It fetches GitHub branches, mirrors them to HF, mirrors tags, and advances the recorded
-recovery checkpoint. It does not use `git push --mirror`, because that could delete HF's
+recovery checkpoint. It also regenerates the Static Space with the latest file tree, README,
+and commit history. It does not use `git push --mirror`, because that could delete HF's
 `refs/pr/*` pull-request refs.
 
 Before a full promotion, HugHub also pushes every branch and tag present in the local clone.
 This means a current developer or agent checkout remains useful even if GitHub can no longer
 be fetched.
 
-Server-side webhook plus polling reconciliation is the next production component. Until it
-lands, run `hh continuity sync` periodically anywhere that needs a warm standby guarantee.
+The native webhook covers HF-side events after promotion. It deliberately does not mirror
+GitHub while GitHub is primary, so run `hh continuity sync` periodically from a developer
+machine, agent host, cron, or another trusted scheduler.
+
+## Read-only Static Space
+
+The Space is a zero-compute snapshot rather than the Git backend itself. Keeping these
+separate preserves original Git commit SHAs and avoids adding Space metadata to the project.
+The generated UI includes:
+
+- Repository file tree with links to HF's file browser
+- README snapshot
+- Recent commits and mirrored SHA
+- Git remote and standby status
+- A prominent arrow to HF's Community menu for issues and pull requests
+
+The Space holds no credentials. This also lets private projects use a static snapshot without
+putting an HF token in browser JavaScript.
+
+For a private mirror, set `HH_JOB_TOKEN` during setup to a separate fine-grained HF token with
+read-only access to that repository. Workflow code never receives the write-capable token used
+by the dispatcher to launch Jobs. Public-repository workflow Jobs receive no HF token at all.
 
 ## Actions on Hugging Face Jobs
 
@@ -153,7 +189,15 @@ Check whether workflows fit the current runner before an outage:
 hh workflow doctor
 ```
 
-In HugHub mode, launch the same workflow directly on HF Jobs:
+After promotion, ordinary pushes launch matching workflows automatically:
+
+```console
+git push
+hh run list
+hh run watch JOB_ID
+```
+
+You can also launch a workflow manually:
 
 ```console
 hh workflow run tests.yml
@@ -161,9 +205,10 @@ hh run list
 hh run watch JOB_ID
 ```
 
-The current manually launched runner supports:
+The current dispatcher and manually launched runner support:
 
 - Parsing `push`, `pull_request`, and `workflow_dispatch` declarations
+- Automatic `push` branch filters and HF pull-request ref events
 - Shell `run` steps
 - `actions/checkout` (performed natively before the steps)
 - Job and step environment variables
@@ -212,8 +257,10 @@ hh continuity status --json
 ```
 
 HugHub stores no repository state in a hosted HH control plane. The local file contains the
-GitHub/HF pairing, mode, last mirrored commit, promotion time, and recovery base. Tokens stay
-with the existing `gh` and `hf` authentication systems.
+GitHub/HF pairing, Static Space, native webhook and source Job IDs, mode, last mirrored
+commit, promotion time, and recovery base. Tokens stay with the existing `gh` and `hf`
+authentication systems. The source Job receives its HF token as an encrypted Job secret;
+the Static Space never receives it.
 
 ## Development
 
@@ -234,6 +281,6 @@ repositories or Jobs.
 3. **Git first.** Recovery is always possible from commits, even if collaboration metadata is
    incomplete.
 4. **One writer after promotion.** Preserve divergent work; never force an automatic merge.
-5. **No idle infrastructure bill.** Store the standby in HF Repos and allocate Jobs only for
-   actual workflow runs.
+5. **No idle infrastructure bill.** Use a Static Space plus native Job webhooks; allocate
+   compute only for dispatch and workflow runs.
 6. **Honest compatibility.** Diagnose unsupported workflows before an outage.

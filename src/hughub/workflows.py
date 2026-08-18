@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import re
 import shlex
 from dataclasses import dataclass
@@ -196,8 +197,10 @@ def _job_script(
 ) -> str:
     lines = [
         "set -eu",
-        'git -c http.extraHeader="Authorization: Bearer ${HF_TOKEN:-}" '
-        'clone "$HH_REPO_URL" /workspace/repo',
+        'if [ -n "${HH_JOB_TOKEN:-}" ]; then '
+        'git -c http.extraHeader="Authorization: Bearer ${HH_JOB_TOKEN}" '
+        'clone "$HH_REPO_URL" /workspace/repo; '
+        'else git clone "$HH_REPO_URL" /workspace/repo; fi',
         "cd /workspace/repo",
         'git checkout "$HH_REF"',
     ]
@@ -245,6 +248,11 @@ def run_workflow(
         ["git", "push", config.hughub_remote, f"HEAD:refs/heads/{branch}"], cwd=cwd, check=True
     )
     repo_url = f"https://huggingface.co/{config.hf_repo}"
+    if config.private and not os.environ.get("HH_JOB_TOKEN"):
+        raise HugHubError(
+            "Private workflow jobs require HH_JOB_TOKEN to contain a fine-grained, "
+            "read-only HF token."
+        )
     launched = 0
     for job_name, job in workflow["jobs"].items():
         spec = specs[str(job.get("runs-on", "ubuntu-latest"))]
@@ -268,13 +276,10 @@ def run_workflow(
                 f"HH_REPO_URL={repo_url}",
                 "--env",
                 f"HH_REF={branch}",
-                "--secrets",
-                "HF_TOKEN",
-                spec.image,
-                "bash",
-                "-lc",
-                script,
             ]
+            if os.environ.get("HH_JOB_TOKEN"):
+                command.extend(["--secrets", "HH_JOB_TOKEN"])
+            command.extend([spec.image, "bash", "-lc", script])
             result = runner.run(command, cwd=cwd)
             print(result.stdout, end="")
             if result.returncode:

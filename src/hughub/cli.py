@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .automation import provision_automation, set_automation
 from .config import load_config, save_config
 from .continuity import enable, promote, recover, render_status, sync, warn_auto_failover
 from .errors import HugHubError
@@ -39,9 +40,10 @@ Normally, every command is passed through to gh unchanged:
   hh run watch 123
 
 Continuity commands:
-  hh continuity enable [OWNER/REPO] [--hf-repo OWNER/REPO]
+  hh continuity enable [OWNER/REPO] [--hf-repo OWNER/REPO] [--space-repo OWNER/REPO]
   hh continuity sync
   hh continuity status [--json]
+  hh continuity automation setup|enable|disable
   hh failover [--overlay | --all]
   hh recover [--no-pr] [--branch NAME]
   hh workflow doctor [WORKFLOW]
@@ -57,11 +59,15 @@ def _continuity(args: list[str], runner: Runner, cwd: Path) -> int:
     enable_parser = subparsers.add_parser("enable")
     enable_parser.add_argument("github_repo", nargs="?")
     enable_parser.add_argument("--hf-repo")
+    enable_parser.add_argument("--space-repo")
     visibility = enable_parser.add_mutually_exclusive_group()
     visibility.add_argument("--private", action="store_true", default=None)
     visibility.add_argument("--public", action="store_false", dest="private")
     enable_parser.add_argument("--no-push", action="store_true")
+    enable_parser.add_argument("--no-automation", action="store_true")
     subparsers.add_parser("sync")
+    automation_parser = subparsers.add_parser("automation")
+    automation_parser.add_argument("automation_action", choices=["setup", "enable", "disable"])
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--json", action="store_true")
     options = parser.parse_args(args)
@@ -70,15 +76,30 @@ def _continuity(args: list[str], runner: Runner, cwd: Path) -> int:
             runner,
             github_repo=options.github_repo,
             hf_repo=options.hf_repo,
+            space_repo=options.space_repo,
             private=options.private,
             no_push=options.no_push,
+            no_automation=options.no_automation,
             cwd=cwd,
         )
         print(f"Continuity enabled: GitHub {config.github_repo} → HugHub {config.hf_repo}")
+        print(f"Static UI: https://huggingface.co/spaces/{config.space_repo}")
+        if config.webhook_id:
+            print(f"Native Job webhook: {config.webhook_id} (standby)")
         return 0
     if options.action == "sync":
         config = sync(runner, cwd)
         print(f"Mirror updated at {config.last_mirrored_sha}")
+        return 0
+    if options.action == "automation":
+        config = load_config(runner, cwd)
+        assert config is not None
+        if options.automation_action == "setup":
+            provision_automation(config)
+        else:
+            set_automation(config, enabled=options.automation_action == "enable")
+        save_config(config, runner, cwd)
+        print(f"HF automation is {'enabled' if config.automation_enabled else 'in standby'}.")
         return 0
     config = load_config(runner, cwd)
     assert config is not None
@@ -167,6 +188,13 @@ def run(
     if config and args[0] in HUB_COMMANDS and OUTAGE_PATTERN.search(result.stderr + result.stdout):
         warn_auto_failover(args)
         config.mode = "overlay"
+        try:
+            set_automation(config, enabled=True)
+        except HugHubError as exc:
+            print(
+                f"hh: warning: {exc}; automatic push-triggered Jobs remain disabled.",
+                file=sys.stderr,
+            )
         save_config(config, runner, cwd)
         return _hub_dispatch(args, runner, cwd)
     _emit(result)
