@@ -71,7 +71,9 @@ def provision_automation(config: RepoConfig, *, api: HfApi | None = None) -> Non
         webhook = api.create_webhook(
             job_id=source_job.id,
             watched=[{"type": "model", "name": config.hf_repo}],
-            domains=["repo", "discussions"],
+            # The live webhook API uses the singular form even though some SDK releases
+            # advertise `discussions` in their type alias.
+            domains=["repo", "discussion"],  # type: ignore[list-item]
         )
         api.disable_webhook(webhook.id)
     except Exception as exc:

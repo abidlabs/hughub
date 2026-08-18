@@ -42,7 +42,7 @@ def test_provision_creates_disabled_native_job_webhook(monkeypatch):
     assert config.automation_enabled is False
     assert api.webhook_kwargs["job_id"] == "job-123"
     assert api.webhook_kwargs["watched"] == [{"type": "model", "name": "hf-acme/widget"}]
-    assert api.webhook_kwargs["domains"] == ["repo", "discussions"]
+    assert api.webhook_kwargs["domains"] == ["repo", "discussion"]
     assert api.run_kwargs["secrets"] == {"HF_TOKEN": "hf_secret"}
     assert api.disabled == ["webhook-456"]
 
